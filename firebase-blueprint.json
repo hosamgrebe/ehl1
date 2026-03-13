@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A financial transaction record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID who owns this transaction" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the transaction occurred" },
+        "fund": { "type": "string", "enum": ["SYP", "USD"], "description": "The currency fund" },
+        "type": { "type": "string", "enum": ["deposit", "withdrawal", "expense"], "description": "Type of transaction" },
+        "amount": { "type": "number", "description": "Transaction amount" },
+        "note": { "type": "string", "description": "Description of the transaction" },
+        "balanceAfter": { "type": "number", "description": "Balance after this transaction" }
+      },
+      "required": ["uid", "timestamp", "fund", "type", "amount", "balanceAfter"]
+    }
+  },
+  "firestore": {
+    "transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of all transactions"
+    }
+  }
+}

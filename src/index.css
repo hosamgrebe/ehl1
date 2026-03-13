@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Cairo", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    direction: rtl;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+}
+
+.arabic-font {
+  font-family: "Cairo", sans-serif;
+}
