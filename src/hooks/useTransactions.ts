@@ -1,12 +1,28 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, addDoc, Timestamp } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  Timestamp,
+} from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { Transaction, FundBalance } from '../types';
 
 export function useTransactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const user = auth.currentUser;
+  const [user, setUser] = useState<User | null>(auth.currentUser);
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -15,12 +31,14 @@ export function useTransactions() {
       return;
     }
 
+    setLoading(true);
+
     const q = query(
       collection(db, 'transactions'),
       where('uid', '==', user.uid)
     );
 
-    const unsubscribe = onSnapshot(
+    const unsubscribeSnapshot = onSnapshot(
       q,
       (snapshot) => {
         const txs = snapshot.docs.map((doc) => ({
@@ -39,14 +57,17 @@ export function useTransactions() {
       },
       (error) => {
         console.error('Firestore Error:', error);
+        setTransactions([]);
         setLoading(false);
       }
     );
 
-    return () => unsubscribe();
+    return () => unsubscribeSnapshot();
   }, [user]);
 
-  const addTransaction = async (tx: Omit<Transaction, 'id' | 'balanceAfter'>) => {
+  const addTransaction = async (
+    tx: Omit<Transaction, 'id' | 'balanceAfter'>
+  ) => {
     if (!user) return;
 
     const fundTxs = transactions.filter((t) => t.fund === tx.fund);
