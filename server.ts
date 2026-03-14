@@ -15,7 +15,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "10mb" }));
 
   // Google Sheets Setup
   const getDoc = async () => {
@@ -44,11 +44,12 @@ async function startServer() {
     try {
       const doc = await getDoc();
       if (!doc) {
-        // Return mock data or empty list if no credentials
         return res.json([]);
       }
+
       const sheet = doc.sheetsByTitle["Transactions"];
       if (!sheet) return res.json([]);
+
       const rows = await sheet.getRows();
       const transactions = rows.map((row) => ({
         id: row.get("ID"),
@@ -59,6 +60,7 @@ async function startServer() {
         note: row.get("Note"),
         balanceAfter: parseFloat(row.get("BalanceAfter")),
       }));
+
       res.json(transactions);
     } catch (error) {
       console.error(error);
@@ -70,18 +72,22 @@ async function startServer() {
     try {
       const { fund, type, amount, note, timestamp, balanceAfter } = req.body;
       const doc = await getDoc();
-      
+
       if (!doc) {
         console.log("Mock Save:", req.body);
         return res.json({ success: true, message: "Saved in Mock Mode" });
       }
 
-      const sheet = doc.sheetsByTitle["Transactions"];
+      let sheet = doc.sheetsByTitle["Transactions"];
       if (!sheet) {
-        await doc.addSheet({ title: "Transactions", headerValues: ["ID", "Timestamp", "Fund", "Type", "Amount", "Note", "BalanceAfter"] });
+        sheet = await doc.addSheet({
+          title: "Transactions",
+          headerValues: ["ID", "Timestamp", "Fund", "Type", "Amount", "Note", "BalanceAfter"],
+        });
       }
-      
+
       const id = Math.random().toString(36).substr(2, 9);
+
       await sheet.addRow({
         ID: id,
         Timestamp: timestamp,
@@ -99,7 +105,7 @@ async function startServer() {
     }
   });
 
-  // Telegram Notification Route
+  // Telegram text notification
   app.post("/api/notify", async (req, res) => {
     const { message } = req.body;
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -115,13 +121,85 @@ async function startServer() {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" }),
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+        }),
       });
+
       const data = await response.json();
       res.json(data);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to send notification" });
+    }
+  });
+
+  // Telegram JSON backup
+  app.post("/api/backup", async (req, res) => {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    const { userEmail, transactions } = req.body;
+
+    if (!token || !chatId) {
+      return res.status(400).json({
+        success: false,
+        error: "Telegram credentials are missing",
+      });
+    }
+
+    try {
+      const now = new Date();
+      const iso = now.toISOString();
+      const safeDate = iso.replace(/[:.]/g, "-");
+      const filename = `backup-${safeDate}.json`;
+
+      const backupPayload = {
+        app: "صندوقي",
+        version: "1.0.0",
+        createdAt: iso,
+        createdBy: userEmail || "unknown",
+        totalTransactions: Array.isArray(transactions) ? transactions.length : 0,
+        transactions: Array.isArray(transactions) ? transactions : [],
+      };
+
+      const formData = new FormData();
+      formData.append("chat_id", chatId);
+      formData.append("caption", `نسخة احتياطية جديدة\n${filename}`);
+      formData.append(
+        "document",
+        new Blob([JSON.stringify(backupPayload, null, 2)], {
+          type: "application/json",
+        }),
+        filename
+      );
+
+      const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return res.status(500).json({
+          success: false,
+          error: data?.description || "Telegram sendDocument failed",
+        });
+      }
+
+      return res.json({
+        success: true,
+        filename,
+        telegram: data,
+      });
+    } catch (error) {
+      console.error("Backup error:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to send backup to Telegram",
+      });
     }
   });
 
