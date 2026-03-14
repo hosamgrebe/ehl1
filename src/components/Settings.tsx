@@ -12,7 +12,15 @@ import {
 import { auth, db } from '../firebase';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  where,
+} from 'firebase/firestore';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -47,9 +55,11 @@ function getBackupSettings(): BackupSettings {
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<'telegram' | 'backup'>('telegram');
+
   const [telegramToken, setTelegramToken] = useState('');
   const [chatId, setChatId] = useState('');
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [telegramMessage, setTelegramMessage] = useState('');
 
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [backupTime, setBackupTime] = useState('23:00');
@@ -65,13 +75,59 @@ export default function Settings() {
     setLastBackupAt(settings.lastBackupAt);
   }, []);
 
-  const handleSaveTelegram = () => {
-    setSaveStatus('saving');
+  useEffect(() => {
+    const loadTelegramSettings = async () => {
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) return;
 
-    setTimeout(() => {
+        const settingsRef = doc(db, 'user_settings', currentUser.uid);
+        const settingsSnap = await getDoc(settingsRef);
+
+        if (settingsSnap.exists()) {
+          const data = settingsSnap.data();
+          setTelegramToken(data.telegramBotToken || '');
+          setChatId(data.telegramChatId || '');
+        }
+      } catch (error) {
+        console.error('Load telegram settings error:', error);
+      }
+    };
+
+    loadTelegramSettings();
+  }, []);
+
+  const handleSaveTelegram = async () => {
+    try {
+      setSaveStatus('saving');
+      setTelegramMessage('');
+
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error('لا يوجد مستخدم مسجل دخول');
+      }
+
+      const settingsRef = doc(db, 'user_settings', currentUser.uid);
+
+      await setDoc(
+        settingsRef,
+        {
+          telegramBotToken: telegramToken.trim(),
+          telegramChatId: chatId.trim(),
+          updatedAt: new Date().toISOString(),
+          userEmail: currentUser.email || '',
+        },
+        { merge: true }
+      );
+
       setSaveStatus('saved');
+      setTelegramMessage('تم حفظ إعدادات تيليجرام بنجاح');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    }, 1000);
+    } catch (error: any) {
+      console.error('Save telegram settings error:', error);
+      setSaveStatus('error');
+      setTelegramMessage(error?.message || 'فشل حفظ إعدادات تيليجرام');
+    }
   };
 
   const handleSaveBackupSettings = () => {
@@ -108,10 +164,10 @@ export default function Settings() {
 
       const snapshot = await getDocs(q);
 
-      const transactions = snapshot.docs.map((doc) => {
-        const data = doc.data();
+      const transactions = snapshot.docs.map((docItem) => {
+        const data = docItem.data();
         return {
-          id: doc.id,
+          id: docItem.id,
           ...data,
           timestamp:
             data.timestamp && typeof data.timestamp.toDate === 'function'
@@ -126,6 +182,8 @@ export default function Settings() {
         body: JSON.stringify({
           userEmail: currentUser.email,
           transactions,
+          telegramBotToken: telegramToken.trim(),
+          telegramChatId: chatId.trim(),
         }),
       });
 
@@ -204,16 +262,16 @@ export default function Settings() {
             <div className="space-y-6">
               <h3 className="flex items-center gap-2 text-xl font-bold text-slate-800">
                 <Send className="text-emerald-600" />
-                ربط بوت تليجرام (اختياري)
+                ربط تيليجرام من داخل التطبيق
               </h3>
 
               <p className="text-sm text-slate-500">
-                استقبل إشعارات فورية على هاتفك عند إضافة أي عملية مالية جديدة.
+                احفظ Bot Token و Chat ID داخل حسابك، ليُستخدم في التنبيهات والنسخ الاحتياطي.
               </p>
 
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500">Token البوت</label>
+                  <label className="text-xs font-bold text-slate-500">Bot Token</label>
                   <input
                     type="password"
                     value={telegramToken}
@@ -242,16 +300,29 @@ export default function Settings() {
                   {saveStatus === 'saving'
                     ? 'جاري الحفظ...'
                     : saveStatus === 'saved'
-                    ? 'تم الحفظ بنجاح!'
-                    : 'حفظ الإعدادات'}
+                    ? 'تم حفظ الإعدادات!'
+                    : 'حفظ إعدادات تيليجرام'}
                 </button>
+
+                {telegramMessage && (
+                  <div
+                    className={cn(
+                      'rounded-2xl p-4 text-sm',
+                      saveStatus === 'error'
+                        ? 'bg-rose-50 text-rose-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    )}
+                  >
+                    {telegramMessage}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 rounded-2xl bg-amber-50 p-4">
                 <AlertCircle className="shrink-0 text-amber-600" size={20} />
                 <p className="text-xs leading-relaxed text-amber-700">
-                  للحصول على هذه المعلومات، قم بإنشاء بوت عبر @BotFather في تليجرام، ثم احصل على
-                  معرف الدردشة عبر @userinfobot.
+                  للحصول على هذه المعلومات، أنشئ بوت من @BotFather ثم احصل على Chat ID. بعد الحفظ
+                  سيُستخدم هذا الربط في التنبيهات والنسخ الاحتياطي.
                 </p>
               </div>
             </div>
@@ -265,7 +336,7 @@ export default function Settings() {
               </h3>
 
               <p className="text-sm text-slate-500">
-                أرسل نسخة احتياطية من بيانات التطبيق بصيغة JSON إلى تليجرام، مع إمكانية ضبط وقت
+                أرسل نسخة احتياطية من بيانات التطبيق بصيغة JSON إلى تيليجرام، مع إمكانية ضبط وقت
                 النسخة الاحتياطية التلقائية.
               </p>
 
@@ -360,8 +431,8 @@ export default function Settings() {
 
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="text-xs leading-relaxed text-slate-500">
-                  يتم إرسال ملف JSON إلى تليجرام عند الضغط على زر النسخة الاحتياطية. التوقيت
-                  التلقائي محفوظ الآن داخل التطبيق، وسنربطه لاحقًا مع تنفيذ تلقائي على السيرفر.
+                  احفظ إعدادات تيليجرام أولًا من التبويب الأول، ثم استخدم زر النسخة الاحتياطية
+                  لإرسال ملف JSON مباشرة إلى نفس الشات.
                 </p>
               </div>
 
