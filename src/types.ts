@@ -16,6 +16,11 @@ export interface FundBalance {
   USD: number;
 }
 
+export interface TelegramSettings {
+  botToken: string;
+  chatId: string;
+}
+
 export const TRANSACTION_TYPES_LABELS: Record<TransactionType, string> = {
   deposit: 'إيداع',
   withdrawal: 'سحب',
