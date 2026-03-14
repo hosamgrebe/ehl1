@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  Settings as SettingsIcon,
   Database,
   Send,
   ShieldCheck,
@@ -10,9 +9,10 @@ import {
   CheckCircle2,
   Power,
 } from 'lucide-react';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -55,7 +55,8 @@ export default function Settings() {
   const [backupTime, setBackupTime] = useState('23:00');
   const [lastBackupAt, setLastBackupAt] = useState('');
   const [backupSaveStatus, setBackupSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [backupNowStatus, setBackupNowStatus] = useState<'idle' | 'loading' | 'done'>('idle');
+  const [backupNowStatus, setBackupNowStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [backupMessage, setBackupMessage] = useState('');
 
   useEffect(() => {
     const settings = getBackupSettings();
@@ -91,10 +92,49 @@ export default function Settings() {
   };
 
   const handleBackupNow = async () => {
-    setBackupNowStatus('loading');
+    try {
+      setBackupNowStatus('loading');
+      setBackupMessage('');
 
-    // سنربطه فعليًا مع Telegram في الخطوة التالية
-    setTimeout(() => {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error('لا يوجد مستخدم مسجل دخول');
+      }
+
+      const q = query(
+        collection(db, 'transactions'),
+        where('uid', '==', currentUser.uid)
+      );
+
+      const snapshot = await getDocs(q);
+
+      const transactions = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          timestamp:
+            data.timestamp && typeof data.timestamp.toDate === 'function'
+              ? data.timestamp.toDate().toISOString()
+              : data.timestamp || '',
+        };
+      });
+
+      const response = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userEmail: currentUser.email,
+          transactions,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'فشل إرسال النسخة الاحتياطية');
+      }
+
       const now = new Date().toISOString();
       setLastBackupAt(now);
 
@@ -105,10 +145,15 @@ export default function Settings() {
       };
 
       localStorage.setItem('backup_settings', JSON.stringify(payload));
-
       setBackupNowStatus('done');
-      setTimeout(() => setBackupNowStatus('idle'), 2000);
-    }, 1000);
+      setBackupMessage(`تم إرسال النسخة الاحتياطية بنجاح: ${result.filename}`);
+
+      setTimeout(() => setBackupNowStatus('idle'), 2500);
+    } catch (error: any) {
+      console.error('Backup error:', error);
+      setBackupNowStatus('error');
+      setBackupMessage(error?.message || 'حدث خطأ أثناء إنشاء النسخة الاحتياطية');
+    }
   };
 
   const formatDateTime = (value: string) => {
@@ -280,9 +325,24 @@ export default function Settings() {
                   {backupNowStatus === 'loading'
                     ? 'جاري إنشاء النسخة...'
                     : backupNowStatus === 'done'
-                    ? 'تم إنشاء النسخة!'
+                    ? 'تم إرسال النسخة!'
+                    : backupNowStatus === 'error'
+                    ? 'إعادة المحاولة'
                     : 'إنشاء نسخة احتياطية الآن'}
                 </button>
+
+                {backupMessage && (
+                  <div
+                    className={cn(
+                      'rounded-2xl p-4 text-sm',
+                      backupNowStatus === 'error'
+                        ? 'bg-rose-50 text-rose-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    )}
+                  >
+                    {backupMessage}
+                  </div>
+                )}
 
                 <button
                   onClick={handleSaveBackupSettings}
@@ -300,8 +360,8 @@ export default function Settings() {
 
               <div className="rounded-2xl bg-slate-50 p-4">
                 <p className="text-xs leading-relaxed text-slate-500">
-                  ملاحظة: زر إنشاء النسخة الاحتياطية جاهز من جهة الواجهة الآن. في الخطوة التالية
-                  سنربطه فعليًا مع السيرفر لكي يرسل ملف JSON مباشرة إلى تليجرام.
+                  يتم إرسال ملف JSON إلى تليجرام عند الضغط على زر النسخة الاحتياطية. التوقيت
+                  التلقائي محفوظ الآن داخل التطبيق، وسنربطه لاحقًا مع تنفيذ تلقائي على السيرفر.
                 </p>
               </div>
 
